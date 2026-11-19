@@ -319,7 +319,7 @@ async def call_tool(name: str, arguments: dict):
                     "name":  char.get("name"),
                     "class": char.get("class"),
                     "level": char.get("level"),
-                    "league": _league,
+                    "league": char.get("league"),
                 },
                 "gear": gear,
                 "passives": {
