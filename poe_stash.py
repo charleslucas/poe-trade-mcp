@@ -59,6 +59,19 @@ def _init():
                   config.get("contact_email", ""), config.get("client_id", ""))
     _league = _detect_league(_api, config)
     _cache = StashCache(_api, _league)
+    _other_caches.clear()
+
+
+_other_caches: dict[str, StashCache] = {}
+
+
+def _cache_for(league: str | None) -> StashCache:
+    """Stash cache for `league`, or the default league's cache when none is given."""
+    if not league or league == _league:
+        return _cache
+    if league not in _other_caches:
+        _other_caches[league] = StashCache(_api, league)
+    return _other_caches[league]
 
 
 TOOLS = [
@@ -104,6 +117,10 @@ TOOLS = [
                     "type": "boolean",
                     "description": "Force refresh, bypassing cache (default false).",
                 },
+                "league": {
+                    "type": "string",
+                    "description": "League whose stash to use, e.g. Standard (default: POE_LEAGUE).",
+                },
             },
         },
     ),
@@ -116,6 +133,10 @@ TOOLS = [
                 "force": {
                     "type": "boolean",
                     "description": "Force refresh tab list (default false).",
+                },
+                "league": {
+                    "type": "string",
+                    "description": "League whose stash to use, e.g. Standard (default: POE_LEAGUE).",
                 },
             },
         },
@@ -156,6 +177,10 @@ TOOLS = [
                     "type": "boolean",
                     "description": "Force refresh stash data (default false).",
                 },
+                "league": {
+                    "type": "string",
+                    "description": "League whose stash to use, e.g. Standard (default: POE_LEAGUE).",
+                },
             },
         },
     ),
@@ -177,6 +202,10 @@ TOOLS = [
                     "type": "boolean",
                     "description": "Force refresh (default false).",
                 },
+                "league": {
+                    "type": "string",
+                    "description": "League whose stash to use, e.g. Standard (default: POE_LEAGUE).",
+                },
             },
             "required": ["query"],
         },
@@ -184,7 +213,15 @@ TOOLS = [
     Tool(
         name="cache_status",
         description="Show cache freshness for stash tabs.",
-        inputSchema={"type": "object", "properties": {}},
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "league": {
+                    "type": "string",
+                    "description": "League whose stash to use, e.g. Standard (default: POE_LEAGUE).",
+                },
+            },
+        },
     ),
 ]
 
@@ -263,15 +300,16 @@ async def call_tool(name: str, arguments: dict):
             return [TextContent(type="text", text=json.dumps(status, indent=2))]
 
         _init()
+        cache = _cache_for(arguments.get("league"))
 
         if name == "get_tab":
             force = arguments.get("force", False)
             tab_name = arguments.get("tab_name")
             tab_index = arguments.get("tab_index")
             if tab_name:
-                items = _cache.get_tab_by_name(tab_name, force=force)
+                items = cache.get_tab_by_name(tab_name, force=force)
             elif tab_index is not None:
-                items = _cache.get_tab(tab_index, force=force)
+                items = cache.get_tab(tab_index, force=force)
             else:
                 return [TextContent(type="text", text="Error: provide tab_name or tab_index")]
             summaries = [_item_summary(i) for i in items]
@@ -280,7 +318,7 @@ async def call_tool(name: str, arguments: dict):
 
         elif name == "list_tabs":
             force = arguments.get("force", False)
-            tabs = _cache.get_tab_list(force=force)
+            tabs = cache.get_tab_list(force=force)
             tab_list = [{"index": t["i"], "name": t["n"], "type": t.get("type", "?")} for t in tabs]
             return [TextContent(type="text", text=json.dumps(tab_list, indent=2))]
 
@@ -309,7 +347,7 @@ async def call_tool(name: str, arguments: dict):
             # Cache-only: read directly from disk cache, never hit remote API
             from stash_cache import _cache_path, _tab_list_path
             if tab_name:
-                tab_list_path = _tab_list_path(_cache.league)
+                tab_list_path = _tab_list_path(cache.league)
                 if not tab_list_path.exists():
                     return [TextContent(type="text", text="Error: no cached tab list. Run list_tabs first to populate cache.")]
                 tabs = json.loads(tab_list_path.read_text())
@@ -326,7 +364,7 @@ async def call_tool(name: str, arguments: dict):
             if tab_index is None:
                 return [TextContent(type="text", text="Error: provide tab_name or tab_index")]
 
-            cache_file = _cache_path(_cache.league, tab_index)
+            cache_file = _cache_path(cache.league, tab_index)
             if not cache_file.exists():
                 return [TextContent(type="text", text=f"Error: tab {tab_index} not cached. Run get_tab first to populate cache.")]
             items = json.loads(cache_file.read_text())
@@ -362,9 +400,9 @@ async def call_tool(name: str, arguments: dict):
             tab_name = arguments.get("tab_name")
 
             if tab_name:
-                items = _cache.get_tab_by_name(tab_name, force=force)
+                items = cache.get_tab_by_name(tab_name, force=force)
             else:
-                items = _cache.get_tabs(range(10), force=force)
+                items = cache.get_tabs(range(10), force=force)
 
             matches = []
             for item in items:
@@ -387,10 +425,10 @@ async def call_tool(name: str, arguments: dict):
             return [TextContent(type="text", text=json.dumps({"matches": len(matches), "items": matches}, indent=2))]
 
         elif name == "cache_status":
-            tabs = _cache.get_tab_list()
+            tabs = cache.get_tab_list()
             statuses = []
             for t in tabs[:15]:
-                age = _cache.cache_age(t["i"])
+                age = cache.cache_age(t["i"])
                 fresh = age is not None and age < 300
                 statuses.append({
                     "index": t["i"],
@@ -399,7 +437,7 @@ async def call_tool(name: str, arguments: dict):
                     "age_seconds": round(age) if age else None,
                     "fresh": fresh,
                 })
-            return [TextContent(type="text", text=json.dumps({"league": _league, "tabs": statuses}, indent=2))]
+            return [TextContent(type="text", text=json.dumps({"league": cache.league, "tabs": statuses}, indent=2))]
 
         else:
             return [TextContent(type="text", text=f"Unknown tool: {name}")]

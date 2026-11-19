@@ -186,6 +186,10 @@ TOOLS = [
                     "type": "boolean",
                     "description": "Bypass stash cache and fetch fresh from API (default true).",
                 },
+                "league": {
+                    "type": "string",
+                    "description": "League whose stash to use, e.g. Standard (default: POE_LEAGUE).",
+                },
             },
         },
     ),
@@ -423,7 +427,7 @@ async def call_tool(name: str, arguments: dict):
         elif name == "scan_stash_tabs":
             min_price = arguments.get("min_price", 5)
             force     = arguments.get("force", True)
-            cache     = StashCache(_api, _league)
+            cache     = StashCache(_api, arguments.get("league") or _league)
 
             all_tabs       = cache.get_tab_list()
             underscore_tabs = [t for t in all_tabs if t["n"].startswith("_")]
